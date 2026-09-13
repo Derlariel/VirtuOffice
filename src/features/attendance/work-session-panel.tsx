@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useState } from "react";
+import { useActionState, useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { PresencePanel, type WorkspacePanel } from "@/features/presence/presence-panel";
 import { updateWorkSessionAction } from "./actions";
@@ -16,17 +16,23 @@ type Props = {
   rooms: { id: string; slug: string; name: string }[];
   initialSession: WorkSessionView | null;
   initialServerNow: string;
+  initialSimpleMode: boolean;
 };
 
-export function WorkSessionPanel({ displayName, userId, rooms, initialSession, initialServerNow }: Props) {
+export function WorkSessionPanel({ displayName, userId, rooms, initialSession, initialServerNow, initialSimpleMode }: Props) {
   const t = useTranslations("Attendance");
   const hud = useTranslations("WorkspaceHUD");
+  const auth = useTranslations("Authentication");
   const locale = useLocale();
   const [session, setSession] = useState(initialSession);
+  const workspaceActive = Boolean(session);
   const [nowMs, setNowMs] = useState(() => Date.parse(initialServerNow));
   const [syncIssue, setSyncIssue] = useState(false);
   const [activePanel, setActivePanel] = useState<WorkspacePanel>(null);
-  const [simpleMode, setSimpleMode] = useState(false);
+  const [simpleMode, setSimpleMode] = useState(initialSimpleMode);
+  const clockOffset = useRef<number | null>(null);
+  const sessionRequest = useRef(0);
+  const panelLauncher = useRef<HTMLElement | null>(null);
   const [feedback, setFeedback] = useState<
     Pick<AttendanceActionState, "event" | "error"> | null
   >(null);
@@ -41,6 +47,7 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
     previous: AttendanceActionState,
     formData: FormData,
   ) => {
+    const request = ++sessionRequest.current;
     let next: AttendanceActionState;
     try {
       next = await updateWorkSessionAction(previous, formData);
@@ -53,8 +60,11 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
       };
     }
 
-    setSession(next.session);
-    setNowMs(Date.parse(next.serverNow));
+    if (request === sessionRequest.current && (!next.error || next.error === "UNAUTHENTICATED")) {
+      setSession(next.session);
+      clockOffset.current = Date.parse(next.serverNow) - Date.now();
+      setNowMs(Date.parse(next.serverNow));
+    }
     setFeedback({ event: next.event, error: next.error });
 
     if (!next.error && "BroadcastChannel" in window) {
@@ -67,8 +77,10 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
   }, initialActionState);
 
   const refreshSession = useCallback(async () => {
+    const request = ++sessionRequest.current;
     try {
       const response = await fetch("/api/work-session", { cache: "no-store" });
+      if (request !== sessionRequest.current) return;
       if (response.status === 401) {
         setSession(null);
         setFeedback({ event: null, error: "UNAUTHENTICATED" });
@@ -80,7 +92,9 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
         serverNow: string;
         session: WorkSessionView | null;
       };
+      if (request !== sessionRequest.current) return;
       setSession(snapshot.session);
+      clockOffset.current = Date.parse(snapshot.serverNow) - Date.now();
       setNowMs(Date.parse(snapshot.serverNow));
       setFeedback(null);
       setSyncIssue(false);
@@ -88,6 +102,10 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
       setSyncIssue(true);
     }
   }, []);
+
+  useEffect(() => {
+    clockOffset.current = Date.parse(initialServerNow) - Date.now();
+  }, [initialServerNow]);
 
   useEffect(() => {
     const onVisible = () => {
@@ -114,7 +132,9 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
 
   useEffect(() => {
     if (!session) return;
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    const timer = window.setInterval(() => {
+      if (clockOffset.current !== null && document.visibilityState === "visible") setNowMs(Date.now() + clockOffset.current);
+    }, 1000);
     return () => window.clearInterval(timer);
   }, [session]);
 
@@ -129,7 +149,22 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
       }).format(new Date(session.checkInAt))
     : null;
 
-  const closePanel = useCallback(() => setActivePanel(null), []);
+  const closePanel = useCallback(() => {
+    setActivePanel(null);
+    panelLauncher.current?.focus();
+  }, []);
+  const enableSimpleMode = useCallback(() => {
+    setSimpleMode(true);
+    setActivePanel("workspace");
+  }, []);
+  useEffect(() => {
+    document.cookie = `simple-mode=${simpleMode ? "1" : "0"}; Path=/; SameSite=Lax; Max-Age=31536000`;
+  }, [simpleMode]);
+  useEffect(() => {
+    if (!activePanel || !workspaceActive) return;
+    const panel = document.getElementById(`${activePanel}-panel`);
+    panel?.querySelector<HTMLElement>("button, select")?.focus();
+  }, [activePanel, workspaceActive]);
   const attendanceCard = (
     <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
       <div className="flex items-center gap-3">
@@ -147,9 +182,12 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
         </div>
       </dl>
       <form action={formAction} className="mt-6">
-        <button type="submit" name="intent" value={session ? "check-out" : "check-in"} disabled={pending} className={`min-h-12 w-full cursor-pointer rounded-xl px-5 py-3 font-semibold text-white transition-colors focus-visible:outline-3 focus-visible:outline-offset-3 disabled:cursor-not-allowed disabled:opacity-50 ${session ? "bg-rose-700 hover:bg-rose-800 focus-visible:outline-rose-700 dark:bg-rose-600 dark:hover:bg-rose-500" : "bg-indigo-700 hover:bg-indigo-800 focus-visible:outline-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-400"}`}>
+        <button type="submit" name="intent" value={session ? "check-out" : "check-in"} disabled={pending} className={`min-h-12 w-full cursor-pointer rounded-xl px-5 py-3 font-semibold text-white transition-colors focus-visible:outline-3 focus-visible:outline-offset-3 disabled:cursor-not-allowed disabled:opacity-50 ${session ? "bg-rose-700 hover:bg-rose-800 focus-visible:outline-rose-700 dark:bg-rose-600 dark:hover:bg-rose-500" : "bg-indigo-700 hover:bg-indigo-800 focus-visible:outline-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-800"}`}>
           {pending ? t("updating") : session ? t("checkOut") : t("checkIn")}
         </button>
+      </form>
+      <form action="/api/auth/signout" method="post" className="mt-3">
+        <button className="min-h-11 w-full cursor-pointer rounded-xl border border-zinc-500 px-4 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-indigo-700">{auth("signOut")}</button>
       </form>
       <div aria-live="polite" className="mt-4 min-h-6 text-sm text-zinc-600 dark:text-zinc-300">
         {feedback?.error ? t(`errors.${feedback.error}`) : null}
@@ -161,17 +199,19 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
 
   return (
     <main id="main-content" className={session ? "fixed inset-0 h-dvh w-screen overflow-hidden" : "mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-4 py-6 sm:px-8 sm:py-10"}>
-      <PresencePanel
+      {session ? <PresencePanel
         userId={userId}
         rooms={rooms}
         workspaceActive={Boolean(session)}
         simpleMode={simpleMode}
         activePanel={activePanel}
         onClosePanel={closePanel}
-      />
+        onSimpleMode={enableSimpleMode}
+      /> : null}
 
       {session ? (
         <div className="pointer-events-none fixed inset-0 z-20">
+          <a href="#workspace-controls" className="pointer-events-auto sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-white focus:p-3 focus:text-indigo-800">{hud("skip")}</a>
           <header className="pointer-events-auto absolute inset-x-3 top-[calc(env(safe-area-inset-top)+0.75rem)] flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 sm:inset-x-4">
             <div className="min-w-0">
               <h1 className="truncate font-semibold tracking-tight">VirtuOffice</h1>
@@ -189,14 +229,18 @@ export function WorkSessionPanel({ displayName, userId, rooms, initialSession, i
             </div>
           </header>
 
-          <nav aria-label={hud("panels")} className="pointer-events-auto absolute inset-x-3 top-[calc(env(safe-area-inset-top)+5rem)] grid grid-cols-4 gap-2 sm:inset-x-auto sm:right-4 sm:w-[30rem]">
+          <nav id="workspace-controls" tabIndex={-1} aria-label={hud("panels")} className="pointer-events-auto absolute inset-x-3 top-[calc(env(safe-area-inset-top)+5rem)] grid grid-cols-4 gap-2 sm:inset-x-auto sm:right-4 sm:w-[30rem]">
             {(["workspace", "tasks", "dashboard", "notifications"] as const).map((panel) => (
               <button
                 key={panel}
                 type="button"
                 aria-pressed={activePanel === panel}
-                aria-controls={`${panel}-panel`}
-                onClick={() => setActivePanel((current) => current === panel ? null : panel)}
+                aria-expanded={activePanel === panel}
+                aria-controls={activePanel === panel ? `${panel}-panel` : undefined}
+                onClick={(event) => {
+                  panelLauncher.current = event.currentTarget;
+                  setActivePanel((current) => current === panel ? null : panel);
+                }}
                 className="min-h-11 cursor-pointer rounded-xl border border-zinc-200 bg-white px-2 text-xs font-semibold shadow-md hover:bg-zinc-100 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-indigo-700 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800 sm:text-sm"
               >
                 {hud(panel)}

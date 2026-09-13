@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { Socket } from "socket.io-client";
 import type {
@@ -23,8 +23,10 @@ export function NotificationCenter({ socket, open, onClose }: Props) {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const loadVersion = useRef(0);
 
   const load = useCallback(async (cursor?: string) => {
+    const version = ++loadVersion.current;
     setLoading(true);
     try {
       const query = new URLSearchParams({ limit: "30" });
@@ -36,19 +38,19 @@ export function NotificationCenter({ socket, open, onClose }: Props) {
         unreadCount: number;
         nextCursor: string | null;
       };
+      if (version !== loadVersion.current) return;
       setNotifications((current) => {
-        const receivedIds = new Set(result.notifications.map((item) => item.id));
         return cursor
           ? [...current, ...result.notifications.filter((item) => !current.some((saved) => saved.id === item.id))]
-          : [...current.filter((item) => !receivedIds.has(item.id)), ...result.notifications];
+          : result.notifications;
       });
-      setUnreadCount((count) => cursor ? result.unreadCount : Math.max(count, result.unreadCount));
+      setUnreadCount(result.unreadCount);
       setNextCursor(result.nextCursor);
       setError(false);
     } catch {
-      setError(true);
+      if (version === loadVersion.current) setError(true);
     } finally {
-      setLoading(false);
+      if (version === loadVersion.current) setLoading(false);
     }
   }, []);
 
@@ -60,22 +62,22 @@ export function NotificationCenter({ socket, open, onClose }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [load]);
+  }, [load, open, socket]);
+
+  useEffect(() => {
+    const refresh = () => { if (open) void load(); };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [load, open]);
 
   useEffect(() => {
     if (!socket) return;
-    const onNotification = (notification: NotificationView) => {
-      setNotifications((current) => [
-        notification,
-        ...current.filter((item) => item.id !== notification.id),
-      ]);
-      setUnreadCount((count) => count + 1);
-    };
+    const onNotification = () => { void load(); };
     socket.on("notification:new", onNotification);
     return () => {
       socket.off("notification:new", onNotification);
     };
-  }, [socket]);
+  }, [socket, load]);
 
   const setRead = async (notification: NotificationView, read: boolean) => {
     try {
@@ -92,6 +94,7 @@ export function NotificationCenter({ socket, open, onClose }: Props) {
       ));
       setUnreadCount((count) => Math.max(0, count + (read ? -1 : 1)));
       setError(false);
+      void load();
     } catch {
       setError(true);
     }
@@ -109,6 +112,7 @@ export function NotificationCenter({ socket, open, onClose }: Props) {
       setNotifications((current) => current.map((item) => ({ ...item, readAt })));
       setUnreadCount(0);
       setError(false);
+      void load();
     } catch {
       setError(true);
     }

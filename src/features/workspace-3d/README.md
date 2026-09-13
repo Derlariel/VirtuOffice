@@ -1,27 +1,16 @@
 # 3D workspace foundation
 
-`WorkspacePreview` lazily loads one fixed, full-viewport `Scene` Canvas after
-check-in. The presence UI supplies a room and participant IDs; all critical
-controls and network ownership stay outside this feature. The Canvas keeps the
-same viewport bounds while HUD drawers open and survives room switches.
+`WorkspacePreview` lazily loads one full-viewport Canvas after check-in and a room snapshot. The existing HUD keeps attendance, room, status and notifications outside the scene. The scene survives transient socket disconnects; room updates do not create multiple canvases.
 
-- `Scene`, `CameraRig`, `Lighting`: renderer, constrained zoom, simple lights.
-- `RoomScene`, `Environment`: room floor, walls, room colors and small decorations.
-- `Avatar`, `AvatarController`, `RemoteAvatar`: primitive characters and target interpolation.
+- `Scene` / `CameraRig`: third-person perspective follow camera with orbit and zoom, bounded polar angles.
+- `Lighting`: bright hemisphere/directional studio-style lights, subtle 512/1024 shadows off on low quality.
+- `RoomScene` / `Environment`: pastel matte surfaces, rounded toy furniture and simple plants. No HDRI, normal maps or postprocessing.
+- `Avatar` / `AvatarController` / `RemoteAvatar`: oversized heads, simplified rounded bodies, local target interpolation.
 
-Click/tap or focus the view and use arrows to move locally. Remote avatars are
-deterministic presence placeholders, not synchronized physical positions. Up to
-60 peers are drawn; the HTML list always includes everyone. No movement packets
-are sent. Future movement networking belongs in the realtime feature, with
-validated room-scoped, throttled updates supplied to these rendering components.
+Both supplied images were reviewed before style changes. The office reference informs cyan/white/green palette and clean furniture; the employee reference informs chibi proportions and matte finish. The office image's isometric projection does not override perspective camera requirements. References are not runtime assets or verified licenses.
 
-Rendering is on demand, paused offscreen/hidden, with DPR capped at 1.5 (1 on
-small/touch devices or after performance decline). Mobile also reduces geometry
-and omits decoration. No textures, shadows, downloaded models, fonts, HDR maps,
-or post-processing are used. Reduced-motion preference skips interpolation.
+Click/tap the floor or use arrows while the view has focus. Drag or pinch controls the camera. Movement is local only; remote avatars are deterministic presence markers, capped at 60 while the HTML list includes everyone. Future network transforms must come from an external, validated, room-scoped, throttled transport; do not put sockets in R3F.
 
-The HTML fallback covers unsupported WebGL, runtime errors, context loss, and
-the user-controlled Simple Mode. Room controls and notifications remain outside
-its error boundary. Browser QA should cover keyboard/touch at
-375px and desktop, room changes, reduced motion, and WEBGL_lose_context while
-confirming HTML controls remain functional. Unit checks run via `npm test`.
+Rendering is on demand, paused when hidden, DPR capped at 1.5 (1 on mobile/low). Touch/small screens start LOW and performance decline reduces quality. Reduced motion skips interpolation. Geometry is procedural and has no external asset downloads.
+
+Explicit Simple Mode persists in a preference cookie and bypasses scene loading on return visits. Unsupported WebGL, context loss or rendering failure activates HTML controls. A user can retry 3D explicitly. Browser QA must still cover actual 375px/landscape layouts, camera following, reduced motion and context loss. Unit tests do not certify visual quality or FPS.

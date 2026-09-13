@@ -1,15 +1,27 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
-import { Environment as HdriEnvironment, OrbitControls, PerformanceMonitor } from "@react-three/drei";
-import { Bloom, EffectComposer, N8AO, ToneMapping } from "@react-three/postprocessing";
-import { ToneMappingMode } from "postprocessing";
+import { useEffect, useRef, useState, type ComponentRef } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { OrbitControls, PerformanceMonitor } from "@react-three/drei";
+import { MathUtils } from "three";
 import { RoomScene, type QualityTier } from "./room-scene";
 import type { Point, WorkspaceView } from "./layout";
 
-export function CameraRig() {
-  return <OrbitControls makeDefault target={[0, 0, 0]} enablePan={false} enableRotate={false} enableDamping={false} minDistance={10} maxDistance={24} />;
+export function CameraRig({ target, reducedMotion }: { target: Point; reducedMotion: boolean }) {
+  const controls = useRef<ComponentRef<typeof OrbitControls>>(null);
+  useFrame(({ camera, invalidate }, delta) => {
+    if (!controls.current) return;
+    const focus = controls.current.target;
+    const x = reducedMotion ? target[0] : MathUtils.damp(focus.x, target[0], 10, Math.min(delta, 0.05));
+    const z = reducedMotion ? target[1] : MathUtils.damp(focus.z, target[1], 10, Math.min(delta, 0.05));
+    if (Math.abs(x - focus.x) + Math.abs(z - focus.z) < 0.0001) return;
+    camera.position.x += x - focus.x;
+    camera.position.z += z - focus.z;
+    focus.set(x, 0.9, z);
+    controls.current.update();
+    invalidate();
+  });
+  return <OrbitControls ref={controls} makeDefault target={[0, 0.9, 4]} enablePan={false} enableDamping={false} minDistance={3} maxDistance={16} minPolarAngle={0.35} maxPolarAngle={Math.PI / 2.1} />;
 }
 
 export function Lighting({ quality }: { quality: QualityTier }) {
@@ -18,13 +30,11 @@ export function Lighting({ quality }: { quality: QualityTier }) {
   }
   return (
     <>
-      <Suspense fallback={null}>
-        <HdriEnvironment preset="studio" environmentIntensity={quality === "HIGH" ? 0.9 : 0.72} />
-      </Suspense>
+      <hemisphereLight args={["#fff7ed", "#a8c5d0", 2]} />
       <directionalLight
         castShadow
         position={[4, 9, 5]}
-        intensity={2.2}
+        intensity={1.6}
         shadow-mapSize={[quality === "HIGH" ? 1024 : 512, quality === "HIGH" ? 1024 : 512]}
         shadow-camera-left={-7}
         shadow-camera-right={7}
@@ -34,17 +44,6 @@ export function Lighting({ quality }: { quality: QualityTier }) {
         shadow-normalBias={0.035}
       />
     </>
-  );
-}
-
-function PostProcessing({ quality }: { quality: QualityTier }) {
-  if (quality === "LOW") return null;
-  return (
-    <EffectComposer multisampling={0} resolutionScale={quality === "HIGH" ? 1 : 0.75}>
-      {quality === "HIGH" ? <N8AO halfRes quality="performance" aoRadius={2.2} distanceFalloff={0.8} intensity={0.65} /> : null}
-      <Bloom mipmapBlur intensity={quality === "HIGH" ? 0.28 : 0.18} luminanceThreshold={1.1} luminanceSmoothing={0.35} radius={0.45} levels={5} />
-      <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-    </EffectComposer>
   );
 }
 
@@ -91,9 +90,8 @@ export default function Scene({ view, target, onMove, fallback, onFailure }: {
       className="!absolute inset-0 h-full w-full"
       frameloop={visible ? "demand" : "never"}
       dpr={quality === "HIGH" ? [1, 1.5] : 1}
-      camera={{ position: [10, 12, 14], fov: 45, near: 0.1, far: 60 }}
+      camera={{ position: [0, 5, 12], fov: 50, near: 0.1, far: 60 }}
       gl={{ antialias: quality === "LOW", powerPreference: "high-performance" }}
-      flat={quality !== "LOW"}
       shadows={quality === "LOW" ? false : "soft"}
       fallback={fallback}
     >
@@ -104,10 +102,9 @@ export default function Scene({ view, target, onMove, fallback, onFailure }: {
         onDecline={() => setQuality((current) => current === "HIGH" ? "MEDIUM" : "LOW")}
         onFallback={() => setQuality("LOW")}
       />
-      <CameraRig />
+      <CameraRig target={target} reducedMotion={reducedMotion} />
       <Lighting quality={quality} />
       <RoomScene key={view.roomId} {...view} target={target} onMove={onMove} quality={quality} reducedMotion={reducedMotion} />
-      <PostProcessing quality={quality} />
     </Canvas>
   );
 }

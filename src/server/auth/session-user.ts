@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { prisma } from "@/server/database/client";
+import { emailDomain } from "./policy";
 
 export const SESSION_COOKIE_NAME = "vo_session";
 
 export async function getUserBySessionToken(token: string | undefined) {
-  if (!token) return null;
+  if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
 
   const sessionTokenHash = createHash("sha256").update(token).digest("hex");
   const session = await prisma.authSession.findUnique({
@@ -16,6 +17,11 @@ export async function getUserBySessionToken(token: string | undefined) {
         select: {
           id: true,
           displayName: true,
+          email: true,
+          roleAssignments: {
+            where: { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+            select: { role: { select: { code: true } } },
+          },
           accountStatus: true,
           deletedAt: true,
         },
@@ -31,5 +37,12 @@ export async function getUserBySessionToken(token: string | undefined) {
     session.user.deletedAt
   ) return null;
 
-  return { id: session.user.id, displayName: session.user.displayName };
+  const domain = emailDomain(session.user.email);
+  if (!domain || !(await prisma.allowedEmailDomain.findUnique({ where: { domain } }))?.isActive) return null;
+
+  return {
+    id: session.user.id,
+    displayName: session.user.displayName,
+    roles: session.user.roleAssignments.map(({ role }) => role.code),
+  };
 }

@@ -10,7 +10,10 @@ async function main() {
   const handle = app.getRequestHandler();
   await app.prepare();
   const server = createServer((request, response) => handle(request, response));
-  await attachPresenceServer(server);
+  const io = await attachPresenceServer(server, process.env.APP_URL ?? `http://${hostname}:${port}`);
+  const shutdown = () => io.close();
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
   server.listen(port, hostname, () => {
     console.log(`> VirtuOffice ready on http://${hostname}:${port}`);
   });

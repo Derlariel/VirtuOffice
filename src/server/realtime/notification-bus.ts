@@ -14,3 +14,9 @@ export function onNotification(listener: (notification: DeliveredNotification) =
   bus.on("notification", listener);
   return () => bus.off("notification", listener);
 }
+
+export function publishWorkSessionClosed(userId: string) { bus.emit("work-session:closed", userId); }
+export function onWorkSessionClosed(listener: (userId: string) => void) {
+  bus.on("work-session:closed", listener);
+  return () => bus.off("work-session:closed", listener);
+}

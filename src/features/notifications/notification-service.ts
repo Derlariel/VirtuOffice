@@ -60,7 +60,7 @@ export async function createNotifications(inputs: NewNotification[]) {
 
 export async function listNotifications(userId: string, limit: number, cursor?: string) {
   const rows = await prisma.notification.findMany({
-    where: { recipientId: userId },
+    where: { recipientId: userId, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -75,7 +75,7 @@ export async function listNotifications(userId: string, limit: number, cursor?: 
 }
 
 export function countUnreadNotifications(userId: string) {
-  return prisma.notification.count({ where: { recipientId: userId, readAt: null } });
+  return prisma.notification.count({ where: { recipientId: userId, readAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] } });
 }
 
 export async function setNotificationReadState(
@@ -84,7 +84,7 @@ export async function setNotificationReadState(
   id?: string,
 ) {
   return prisma.notification.updateMany({
-    where: { recipientId: userId, ...(id ? { id } : {}) },
+    where: { recipientId: userId, ...(id ? { id } : {}), OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
     data: { readAt: read ? new Date() : null },
   });
 }

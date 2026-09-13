@@ -6,6 +6,7 @@ import {
   getUserBySessionToken,
 } from "@/server/auth/session-user";
 import { prisma } from "@/server/database/client";
+import { isAllowedOrigin } from "@/server/auth/policy";
 import { canEnterRoom, getLobbyRoomId } from "@/features/presence/presence-service";
 import { activityDeadline, getActivityConfig } from "@/features/activity/timing";
 import {
@@ -13,7 +14,7 @@ import {
   createNotifications,
   toNotificationView,
 } from "@/features/notifications/notification-service";
-import { onNotification, publishNotifications } from "./notification-bus";
+import { onNotification, onWorkSessionClosed, publishNotifications } from "./notification-bus";
 import {
   isPresenceUpdate,
   type ClientToServerEvents,
@@ -74,7 +75,7 @@ function view(state: UserState, status: WorkStatus = state.status): PresenceView
   };
 }
 
-export async function attachPresenceServer(httpServer: HttpServer) {
+export async function attachPresenceServer(httpServer: HttpServer, origin: string) {
   const activityConfig = getActivityConfig();
   // ponytail: single-process ownership; add a shared Socket.IO adapter before horizontal scaling.
   await prisma.presence.updateMany({
@@ -89,12 +90,14 @@ export async function attachPresenceServer(httpServer: HttpServer) {
     pingInterval: 25_000,
     pingTimeout: 20_000,
     maxHttpBufferSize: 10_000,
+    allowRequest: (request, callback) => callback(null, isAllowedOrigin(request.headers.origin, origin)),
   });
   const states = new Map<string, UserState>();
   const loads = new Map<string, Promise<UserState>>();
-  onNotification(({ recipientId, notification }) => {
+  const unsubscribeNotifications = onNotification(({ recipientId, notification }) => {
     io.to(userChannel(recipientId)).emit("notification:new", notification);
   });
+  const unsubscribeCheckout = onWorkSessionClosed((userId) => io.in(userChannel(userId)).disconnectSockets(true));
 
   const snapshot = (roomId: string | null) =>
     [...states.values()]
@@ -121,10 +124,18 @@ export async function attachPresenceServer(httpServer: HttpServer) {
             memberId: state.userId,
             validFrom: { lte: now },
             OR: [{ validUntil: null }, { validUntil: { gt: now } }],
+            supervisor: {
+              accountStatus: "ACTIVE", deletedAt: null,
+              roleAssignments: { some: {
+                role: { code: "SUPERVISOR" },
+                OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+              } },
+            },
           },
           select: { supervisorId: true },
         }),
       ]);
+      if (!workSession) return null;
       const event = await transaction.activityEvent.create({
         data: {
           userId: state.userId,
@@ -155,6 +166,10 @@ export async function attachPresenceServer(httpServer: HttpServer) {
       return notifications;
     });
 
+    if (result === null) {
+      io.in(userChannel(state.userId)).disconnectSockets(true);
+      return;
+    }
     publishNotifications(result.map((notification) => ({
       recipientId: notification.recipientId,
       notification: toNotificationView(notification),
@@ -209,6 +224,11 @@ export async function attachPresenceServer(httpServer: HttpServer) {
     state.activityTimer = setTimeout(() => {
       state.activityTimer = undefined;
       const run = state.mutation.then(async () => {
+        if (state.socketIds.size === 0) return;
+        if (!(await hasWorkSession(state.userId))) {
+          io.in(userChannel(state.userId)).disconnectSockets(true);
+          return;
+        }
         const remaining = activityDeadline(
           state.lastActivityAt,
           state.warningAt,
@@ -286,11 +306,15 @@ export async function attachPresenceServer(httpServer: HttpServer) {
     return promise;
   };
 
+  const hasWorkSession = async (userId: string) => Boolean(await prisma.workSession.findFirst({
+    where: { userId, status: "OPEN" }, select: { id: true },
+  }));
+
   io.use(async (socket, next) => {
     try {
       const token = cookieValue(socket.handshake.headers.cookie, SESSION_COOKIE_NAME);
       const user = await getUserBySessionToken(token);
-      if (!user) return next(new Error("UNAUTHENTICATED"));
+      if (!user || !(await hasWorkSession(user.id))) return next(new Error("UNAUTHENTICATED"));
       socket.data.user = user;
       next();
     } catch {
@@ -307,6 +331,21 @@ export async function attachPresenceServer(httpServer: HttpServer) {
       socket.disconnect(true);
       return;
     }
+    // Revalidate before each mutation; heartbeat also expires idle sockets.
+    let packetWindow = Date.now();
+    let packetCount = 0;
+    socket.use(async (_packet, next) => {
+      if (Date.now() - packetWindow >= 1_000) { packetWindow = Date.now(); packetCount = 0; }
+      if (++packetCount > 20) { socket.disconnect(true); return next(new Error("RATE_LIMITED")); }
+      try {
+        const user = await getUserBySessionToken(cookieValue(socket.handshake.headers.cookie, SESSION_COOKIE_NAME));
+        if (!user || !(await hasWorkSession(user.id))) {
+          socket.disconnect(true);
+          return next(new Error("UNAUTHENTICATED"));
+        }
+        next();
+      } catch { socket.disconnect(true); next(new Error("UNAUTHENTICATED")); }
+    });
     const wasOnline = state.socketIds.size > 0 || Boolean(state.offlineTimer);
     if (state.offlineTimer) clearTimeout(state.offlineTimer);
     state.offlineTimer = undefined;
@@ -323,12 +362,16 @@ export async function attachPresenceServer(httpServer: HttpServer) {
     }
     scheduleActivity(state);
 
+    let lastSignalAt = 0;
     socket.on("activity:signal", () => {
+      if (Date.now() - lastSignalAt < 5_000) return;
+      lastSignalAt = Date.now();
       const run = state.mutation.then(() => recordActivity(state, false));
       state.mutation = run.catch((error) => console.error("Activity signal failed", error));
     });
 
     socket.on("activity:confirm", (acknowledge) => {
+      if (typeof acknowledge !== "function") return;
       const run = state.mutation.then(() => recordActivity(state, true));
       state.mutation = run.catch(() => undefined);
       void run.then(
@@ -341,6 +384,7 @@ export async function attachPresenceServer(httpServer: HttpServer) {
     });
 
     socket.on("presence:update", (update, acknowledge) => {
+      if (typeof acknowledge !== "function") return;
       if (!isPresenceUpdate(update)) return acknowledge({ ok: false, error: "INVALID_UPDATE" });
 
       const run = state.mutation.then(async () => {
@@ -388,7 +432,7 @@ export async function attachPresenceServer(httpServer: HttpServer) {
       );
     });
 
-    socket.on("disconnect", () => {
+    const disconnect = () => {
       state.socketIds.delete(socket.id);
       if (state.socketIds.size > 0) return;
       if (state.activityTimer) clearTimeout(state.activityTimer);
@@ -420,10 +464,18 @@ export async function attachPresenceServer(httpServer: HttpServer) {
         });
         state.mutation = close.catch((error) => console.error("Failed to close presence", error));
       }, DISCONNECT_GRACE_MS);
-    });
+    };
+    socket.on("disconnect", disconnect);
+    if (!socket.connected) disconnect();
   });
 
   const heartbeat = setInterval(() => {
+    for (const socket of io.sockets.sockets.values()) {
+      void (async () => {
+        const user = await getUserBySessionToken(cookieValue(socket.handshake.headers.cookie, SESSION_COOKIE_NAME));
+        if (!user || !(await hasWorkSession(user.id))) socket.disconnect(true);
+      })().catch(() => socket.disconnect(true));
+    }
     const ids = [...states.values()].map((state) => state.presenceId);
     if (ids.length) void prisma.presence.updateMany({
       where: { id: { in: ids }, endedAt: null },
@@ -431,6 +483,17 @@ export async function attachPresenceServer(httpServer: HttpServer) {
     }).catch((error) => console.error("Presence heartbeat failed", error));
   }, LAST_SEEN_INTERVAL_MS);
   heartbeat.unref();
+
+  httpServer.once("close", () => {
+    clearInterval(heartbeat);
+    unsubscribeNotifications();
+    unsubscribeCheckout();
+    for (const state of states.values()) {
+      clearTimeout(state.offlineTimer);
+      clearTimeout(state.activityTimer);
+    }
+    states.clear();
+  });
 
   return io;
 }

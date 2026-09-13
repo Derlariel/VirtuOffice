@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/database/client";
 import type { WorkSessionView } from "./types";
+import { publishWorkSessionClosed } from "@/server/realtime/notification-bus";
 
 const sessionSelect = {
   id: true,
@@ -50,7 +51,7 @@ export async function checkIn(userId: string) {
 }
 
 export async function checkOut(userId: string) {
-  return prisma.$transaction(async (transaction) => {
+  const closed = await prisma.$transaction(async (transaction) => {
     const active = await transaction.workSession.findFirst({
       where: { userId, status: "OPEN" },
       orderBy: { checkInAt: "desc" },
@@ -81,4 +82,6 @@ export async function checkOut(userId: string) {
       select: sessionSelect,
     });
   });
+  publishWorkSessionClosed(userId);
+  return closed;
 }

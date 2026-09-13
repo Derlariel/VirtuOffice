@@ -14,7 +14,6 @@ import {
 } from "./types";
 
 const ACTIVITY_SEND_INTERVAL_MS = 30_000;
-const LAST_ACTIVITY_SIGNAL_KEY = "virtuoffice-last-activity-signal";
 
 export type WorkspacePanel = "workspace" | "dashboard" | "tasks" | "notifications" | null;
 
@@ -25,6 +24,7 @@ type Props = {
   simpleMode: boolean;
   activePanel: WorkspacePanel;
   onClosePanel: () => void;
+  onSimpleMode: () => void;
 };
 
 export const PresencePanel = memo(function PresencePanel({
@@ -34,8 +34,11 @@ export const PresencePanel = memo(function PresencePanel({
   simpleMode,
   activePanel,
   onClosePanel,
+  onSimpleMode,
 }: Props) {
   const t = useTranslations("Presence");
+  const roomLabels = useTranslations("Rooms");
+  const roomName = (room: { slug: string; name: string }) => roomLabels.has(room.slug) ? roomLabels(room.slug) : room.name;
   const locale = useLocale();
   const socketRef = useRef<Socket<ServerToClientEvents, ClientToServerEvents> | null>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
@@ -69,7 +72,6 @@ export const PresencePanel = memo(function PresencePanel({
       setConnected(true);
       setRealtimeSocket(socket);
       setError(null);
-      localStorage.setItem(LAST_ACTIVITY_SIGNAL_KEY, String(Date.now()));
       socket.emit("activity:signal");
     });
     socket.on("disconnect", () => {
@@ -91,13 +93,13 @@ export const PresencePanel = memo(function PresencePanel({
     socket.on("activity:cleared", () => setWarningDeadline(null));
 
     let pendingSignal: number | undefined;
+    let lastSentAt = 0;
     const signalActivity = () => {
       if (!socket.connected || document.visibilityState !== "visible" || !document.hasFocus()) return;
       const now = Date.now();
-      const lastSentAt = Number(localStorage.getItem(LAST_ACTIVITY_SIGNAL_KEY) ?? 0);
       const wait = ACTIVITY_SEND_INTERVAL_MS - (now - lastSentAt);
       if (wait <= 0) {
-        localStorage.setItem(LAST_ACTIVITY_SIGNAL_KEY, String(now));
+        lastSentAt = now;
         socket.emit("activity:signal");
       } else if (pendingSignal === undefined) {
         pendingSignal = window.setTimeout(() => {
@@ -150,15 +152,15 @@ export const PresencePanel = memo(function PresencePanel({
 
   return (
     <>
-      {workspaceActive && connected && currentRoom && workspaceView ? (
-        <WorkspacePreview simpleMode={simpleMode} roomName={currentRoom.name} view={workspaceView} />
+      {workspaceActive && currentRoom && workspaceView ? (
+        <WorkspacePreview simpleMode={simpleMode} roomName={roomName(currentRoom)} view={workspaceView} onFailure={onSimpleMode} />
       ) : null}
 
       {workspaceActive ? (
         <div className="pointer-events-none fixed inset-0 z-20" aria-label={t("title")}>
           {activePanel ? null : (
             <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+8.5rem)] max-w-[calc(100vw-1.5rem)] rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm shadow-md dark:border-zinc-700 dark:bg-zinc-900 sm:left-4">
-              <p className="font-semibold">{currentRoom?.name ?? t("room")}</p>
+              <p className="font-semibold">{currentRoom ? roomName(currentRoom) : t("room")}</p>
               <p aria-live="polite" className="text-zinc-600 dark:text-zinc-300">
                 {error ? t(error) : connected ? t("onlineCount", { count: members.length }) : t("reconnecting")}
               </p>
@@ -190,6 +192,7 @@ export const PresencePanel = memo(function PresencePanel({
                 <label className="text-sm font-medium">
                   {t("status")}
                   <select value={self?.status ?? "AVAILABLE"} disabled={!connected} onChange={(event) => update({ status: event.target.value as PresenceUpdate["status"] })} className="mt-2 min-h-12 w-full cursor-pointer rounded-xl border border-zinc-300 bg-transparent px-3 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600">
+                    {self?.status === "INACTIVE" ? <option value="INACTIVE">{t("statuses.INACTIVE")}</option> : null}
                     {SELECTABLE_WORK_STATUSES.map((status) => <option key={status} value={status}>{t(`statuses.${status}`)}</option>)}
                   </select>
                 </label>
@@ -197,7 +200,7 @@ export const PresencePanel = memo(function PresencePanel({
                   <label className="text-sm font-medium" htmlFor="presence-room">{t("room")}</label>
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                     <select id="presence-room" value={self?.roomId ?? lobbyRoomId ?? ""} disabled={!connected} onChange={(event) => update({ roomId: event.target.value })} className="min-h-12 min-w-0 flex-1 cursor-pointer rounded-xl border border-zinc-300 bg-transparent px-3 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600">
-                      {rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}
+                      {rooms.map((room) => <option key={room.id} value={room.id}>{roomName(room)}</option>)}
                     </select>
                     <button type="button" disabled={!connected || !lobbyRoomId || self?.roomId === lobbyRoomId} onClick={() => lobbyRoomId && update({ roomId: lobbyRoomId })} className="min-h-12 cursor-pointer rounded-xl border border-zinc-300 px-4 font-semibold hover:bg-zinc-100 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:hover:bg-zinc-800">
                       {t("leaveRoom")}
@@ -257,7 +260,7 @@ export const PresencePanel = memo(function PresencePanel({
               ref={confirmRef}
               type="button"
               onClick={confirmActivity}
-              className="mt-6 min-h-12 w-full cursor-pointer rounded-xl bg-indigo-700 px-5 py-3 font-semibold text-white hover:bg-indigo-800 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-400"
+              className="mt-6 min-h-12 w-full cursor-pointer rounded-xl bg-indigo-700 px-5 py-3 font-semibold text-white hover:bg-indigo-800 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-800"
             >
               {t("confirmActivity")}
             </button>

@@ -26,3 +26,14 @@ body {
 button {
   touch-action: manipulation;
 }
+
+/* HUD panels scroll within the viewport, including short landscape screens. */
+[id$="-panel"] {
+  max-height: calc(100dvh - 9.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 639px) {
+  [id$="-panel"] { bottom: calc(env(safe-area-inset-bottom) + 0.75rem); }
+}
