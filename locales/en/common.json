@@ -1,0 +1,110 @@
+{
+  "Home": {
+    "title": "VirtuOffice",
+    "description": "The project foundation is ready for phased development."
+  },
+  "Authentication": {
+    "requiredTitle": "Sign in required",
+    "requiredDescription": "Your identity must be verified before you can manage a work session. Authentication will be connected in its dedicated phase."
+  },
+  "Attendance": {
+    "eyebrow": "Work session",
+    "readyTitle": "Ready when you are.",
+    "workingTitle": "Your workday is underway.",
+    "readyDescription": "Check in to start one shared work session across your signed-in tabs and devices.",
+    "workingDescription": "Your check-in is saved. You can close this tab and safely resume the same session later.",
+    "checkedIn": "Checked in",
+    "checkedOut": "Not checked in",
+    "duration": "Current duration",
+    "checkInTime": "Check-in time",
+    "notStarted": "Not started",
+    "checkIn": "Check in",
+    "checkOut": "Check out",
+    "updating": "Updating…",
+    "syncIssue": "Connection lost. Your saved session is unchanged; this page will retry automatically.",
+    "recoveryNote": "Your work session is stored securely and can be recovered after a browser restart or connection loss.",
+    "errors": {
+      "UNAUTHENTICATED": "Your sign-in has expired. Sign in again before updating the session.",
+      "UPDATE_FAILED": "The session could not be updated. Check your connection and try again."
+    },
+    "events": {
+      "CHECKED_IN": "Check-in saved.",
+      "CHECKED_OUT": "Check-out saved."
+    }
+  },
+  "Presence": {
+    "title": "Realtime presence",
+    "close": "Close",
+    "connected": "Connected",
+    "reconnecting": "Reconnecting…",
+    "connectionFailed": "Connection lost. Reconnecting automatically…",
+    "roomForbidden": "You do not have access to that room.",
+    "updateFailed": "Presence could not be updated. Try again.",
+    "activityConfirmFailed": "Your confirmation could not be saved. Try again.",
+    "activityWarningTitle": "Are you still working?",
+    "activityWarningDescription": "Confirm by {time} to keep your status active.",
+    "inactivityDisclaimer": "Inactivity is an availability signal, not evidence that you are not working.",
+    "confirmActivity": "Yes, I’m still working",
+    "onlineCount": "{count, plural, one {# person online} other {# people online}}",
+    "status": "Status",
+    "room": "Room",
+    "leaveRoom": "Leave to Lobby",
+    "members": "People in this room",
+    "statuses": {
+      "AVAILABLE": "Available",
+      "WORKING": "Working",
+      "IN_MEETING": "In meeting",
+      "FOCUS": "Focus",
+      "BREAK": "Break",
+      "AWAY": "Away",
+      "INACTIVE": "Inactive",
+      "OFFLINE": "Offline"
+    }
+  },
+  "Workspace3D": {
+    "title": "3D workspace · {room}",
+    "loading": "Loading workspace…",
+    "simpleMode": "Simple Mode",
+    "simpleDescription": "The 3D world is disabled. Room, status, dashboard, and notification controls remain available.",
+    "show": "Show 3D",
+    "hide": "Hide 3D",
+    "instructions": "Click or tap the floor to move your purple avatar. Focus the view and use arrow keys, or pinch to zoom. Movement is a local preview; teal avatars represent room participants. The complete participant list and room controls are above.",
+    "fallback": "3D is unavailable on this device. Use the room controls and participant list above to continue working."
+  },
+  "WorkspaceHUD": {
+    "panels": "Workspace panels",
+    "workspace": "Room",
+    "tasks": "Tasks",
+    "dashboard": "Dashboard",
+    "notifications": "Notifications",
+    "simpleMode": "Simple Mode",
+    "enable3d": "Enable 3D",
+    "close": "Close",
+    "tasksPlaceholder": "The task board will open in this panel when that feature is implemented."
+  },
+  "Notifications": {
+    "title": "Notifications",
+    "show": "Show history",
+    "hide": "Hide history",
+    "close": "Close",
+    "unreadCount": "{count, plural, =0 {No unread notifications} one {# unread notification} other {# unread notifications}}",
+    "unread": "Unread",
+    "markAllRead": "Mark all as read",
+    "empty": "No notifications yet.",
+    "loading": "Loading…",
+    "loadMore": "Load more",
+    "loadFailed": "Notifications could not be loaded. Open the center to retry.",
+    "retry": "Retry",
+    "someone": "A colleague",
+    "types": {
+      "INACTIVITY_WARNING": "Inactivity warning",
+      "INACTIVITY_ESCALATION": "{name} did not respond to an inactivity warning",
+      "TASK_ASSIGNED": "{name} assigned you a task",
+      "TASK_UPDATED": "{name} updated a task",
+      "SUBMISSION_UPDATED": "{name} updated a submission",
+      "SUBMISSION_RECEIVED": "Submission received from {name}",
+      "MEETING_INVITATION": "{name} invited you to a meeting",
+      "SYSTEM": "System notification"
+    }
+  }
+}

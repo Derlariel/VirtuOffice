@@ -1,0 +1,597 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleCode {
+  ADMIN
+  SUPERVISOR
+  MEMBER
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum WorkSessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum WorkStatus {
+  AVAILABLE
+  WORKING
+  IN_MEETING
+  FOCUS
+  AWAY
+  INACTIVE
+  BREAK
+  OFFLINE
+}
+
+enum PresenceConnection {
+  ONLINE
+  OFFLINE
+}
+
+enum ActivityEventType {
+  IDLE_WARNING
+  IDLE_ACKNOWLEDGED
+  MARKED_INACTIVE
+  ACTIVITY_RESUMED
+  ESCALATED
+}
+
+enum RoomKind {
+  LOBBY
+  WORK
+  MEETING
+  FOCUS
+  BREAK
+}
+
+enum TaskStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskEventType {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  ASSIGNED
+  COMMENTED
+  ATTACHMENT_ADDED
+  SUBMISSION_ADDED
+  DELETED
+}
+
+enum FileScanStatus {
+  PENDING
+  CLEAN
+  REJECTED
+  ERROR
+}
+
+enum SubmissionType {
+  FILE
+  LINK
+  MIXED
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+enum MeetingParticipantRole {
+  HOST
+  PARTICIPANT
+}
+
+enum MeetingParticipantStatus {
+  INVITED
+  JOINED
+  LEFT
+  REMOVED
+}
+
+enum NotificationType {
+  INACTIVITY_WARNING
+  INACTIVITY_ESCALATION
+  TASK_ASSIGNED
+  TASK_UPDATED
+  SUBMISSION_UPDATED
+  SUBMISSION_RECEIVED
+  MEETING_INVITATION
+  SYSTEM
+}
+
+model User {
+  id                     String               @id @default(uuid()) @db.Uuid
+  email                  String               @unique @db.VarChar(320)
+  displayName            String               @db.VarChar(120)
+  accountStatus          AccountStatus        @default(ACTIVE)
+  locale                 String               @default("th") @db.VarChar(10)
+  deletedAt              DateTime?            @db.Timestamptz(3)
+  createdAt              DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime             @updatedAt @db.Timestamptz(3)
+  roleAssignments        UserRole[]           @relation("UserRoleUser")
+  rolesGranted           UserRole[]           @relation("UserRoleAssignedBy")
+  reportsAsMember        ReportsTo[]          @relation("ReportsMember")
+  reportsAsSupervisor    ReportsTo[]          @relation("ReportsSupervisor")
+  reportsAssigned        ReportsTo[]          @relation("ReportsAssignedBy")
+  domainsCreated         AllowedEmailDomain[] @relation("DomainCreatedBy")
+  authIdentities         AuthIdentity[]
+  authSessions           AuthSession[]
+  workSessions           WorkSession[]
+  activityEvents         ActivityEvent[]
+  presences              Presence[]
+  roomMemberships        RoomMembership[]     @relation("RoomMembershipUser")
+  roomMembershipsGranted RoomMembership[]     @relation("RoomMembershipGrantedBy")
+  tasksAssigned          Task[]               @relation("TaskAssignee")
+  tasksReported          Task[]               @relation("TaskReporter")
+  taskComments           TaskComment[]
+  taskAttachments        TaskAttachment[]
+  taskEvents             TaskEvent[]
+  submissions            Submission[]
+  meetingsCreated        Meeting[]            @relation("MeetingCreator")
+  meetingParticipants    MeetingParticipant[]
+  meetingMessages        MeetingMessage[]
+  notificationsReceived  Notification[]       @relation("NotificationRecipient")
+  notificationsSent      Notification[]       @relation("NotificationActor")
+
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        RoleCode         @unique
+  name        String           @db.VarChar(80)
+  description String?          @db.VarChar(255)
+  isSystem    Boolean          @default(true)
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @db.Timestamptz(3)
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique @db.VarChar(120)
+  description String?          @db.VarChar(255)
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  userId       String    @db.Uuid
+  roleId       String    @db.Uuid
+  assignedById String?   @db.Uuid
+  assignedAt   DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt    DateTime? @db.Timestamptz(3)
+  user         User      @relation("UserRoleUser", fields: [userId], references: [id], onDelete: Cascade)
+  role         Role      @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  assignedBy   User?     @relation("UserRoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@id([userId, roleId])
+  @@index([roleId, expiresAt])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  grantedAt    DateTime   @default(now()) @db.Timestamptz(3)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model ReportsTo {
+  id           String    @id @default(uuid()) @db.Uuid
+  memberId     String    @db.Uuid
+  supervisorId String    @db.Uuid
+  assignedById String?   @db.Uuid
+  validFrom    DateTime  @default(now()) @db.Timestamptz(3)
+  validUntil   DateTime? @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(3)
+  member       User      @relation("ReportsMember", fields: [memberId], references: [id], onDelete: Restrict)
+  supervisor   User      @relation("ReportsSupervisor", fields: [supervisorId], references: [id], onDelete: Restrict)
+  assignedBy   User?     @relation("ReportsAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([memberId, supervisorId, validFrom])
+  @@index([memberId, validUntil])
+  @@index([supervisorId, validUntil])
+  @@map("reports_to")
+}
+
+model AllowedEmailDomain {
+  id          String   @id @default(uuid()) @db.Uuid
+  domain      String   @unique @db.VarChar(253)
+  isActive    Boolean  @default(true)
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  createdBy   User?    @relation("DomainCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([isActive])
+  @@map("allowed_email_domains")
+}
+
+model AuthIdentity {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @db.Uuid
+  provider        String    @db.VarChar(80)
+  providerSubject String    @db.VarChar(255)
+  lastLoginAt     DateTime? @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerSubject])
+  @@index([userId])
+  @@map("auth_identities")
+}
+
+model AuthSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  sessionTokenHash String    @unique @db.Char(64)
+  expiresAt        DateTime  @db.Timestamptz(3)
+  revokedAt        DateTime? @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("auth_sessions")
+}
+
+model WorkSession {
+  id                 String            @id @default(uuid()) @db.Uuid
+  userId             String            @db.Uuid
+  status             WorkSessionStatus @default(OPEN)
+  checkInAt          DateTime          @default(now()) @db.Timestamptz(3)
+  checkOutAt         DateTime?         @db.Timestamptz(3)
+  checkOutReason     String?           @db.VarChar(120)
+  durationSeconds    Int?
+  breakSeconds       Int               @default(0)
+  inactiveSeconds    Int               @default(0)
+  retentionExpiresAt DateTime?         @db.Timestamptz(3)
+  createdAt          DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @db.Timestamptz(3)
+  user               User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  activityEvents     ActivityEvent[]
+
+  @@index([userId, checkInAt(sort: Desc)])
+  @@index([retentionExpiresAt])
+  @@map("work_sessions")
+}
+
+/// Retain for 90 days, then purge by expiresAt. Never stores raw key or pointer data.
+model ActivityEvent {
+  id                   String            @id @default(uuid()) @db.Uuid
+  userId               String            @db.Uuid
+  workSessionId        String?           @db.Uuid
+  type                 ActivityEventType
+  occurredAt           DateTime          @default(now()) @db.Timestamptz(3)
+  supervisorNotifiedAt DateTime?         @db.Timestamptz(3)
+  expiresAt            DateTime          @default(dbgenerated("(CURRENT_TIMESTAMP + INTERVAL '90 days')")) @db.Timestamptz(3)
+  createdAt            DateTime          @default(now()) @db.Timestamptz(3)
+  user                 User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  workSession          WorkSession?      @relation(fields: [workSessionId], references: [id], onDelete: Cascade)
+  notifications        Notification[]
+
+  @@index([userId, occurredAt(sort: Desc)])
+  @@index([workSessionId, occurredAt])
+  @@index([expiresAt])
+  @@map("activity_events")
+}
+
+/// Current presence is the row with endedAt = null. Closed rows are purged after 90 days.
+model Presence {
+  id         String             @id @default(uuid()) @db.Uuid
+  userId     String             @db.Uuid
+  roomId     String?            @db.Uuid
+  workStatus WorkStatus         @default(OFFLINE)
+  connection PresenceConnection @default(OFFLINE)
+  startedAt  DateTime           @default(now()) @db.Timestamptz(3)
+  endedAt    DateTime?          @db.Timestamptz(3)
+  lastSeenAt DateTime           @default(now()) @db.Timestamptz(3)
+  expiresAt  DateTime           @default(dbgenerated("(CURRENT_TIMESTAMP + INTERVAL '90 days')")) @db.Timestamptz(3)
+  updatedAt  DateTime           @updatedAt @db.Timestamptz(3)
+  user       User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  room       Room?              @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([userId, startedAt(sort: Desc)])
+  @@index([roomId, endedAt])
+  @@index([expiresAt])
+  @@map("presences")
+}
+
+model Room {
+  id          String           @id @default(uuid()) @db.Uuid
+  slug        String           @unique @db.VarChar(80)
+  name        String           @db.VarChar(120)
+  kind        RoomKind
+  capacity    Int              @default(30)
+  isActive    Boolean          @default(true)
+  archivedAt  DateTime?        @db.Timestamptz(3)
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @db.Timestamptz(3)
+  presences   Presence[]
+  memberships RoomMembership[]
+  tasks       Task[]
+  meetings    Meeting[]
+
+  @@index([isActive, kind])
+  @@map("rooms")
+}
+
+model RoomMembership {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  roomId      String    @db.Uuid
+  grantedById String?   @db.Uuid
+  expiresAt   DateTime? @db.Timestamptz(3)
+  revokedAt   DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  user        User      @relation("RoomMembershipUser", fields: [userId], references: [id], onDelete: Cascade)
+  room        Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  grantedBy   User?     @relation("RoomMembershipGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, roomId])
+  @@index([roomId, revokedAt])
+  @@index([expiresAt])
+  @@map("room_memberships")
+}
+
+model Task {
+  id          String           @id @default(uuid()) @db.Uuid
+  roomId      String?          @db.Uuid
+  assigneeId  String?          @db.Uuid
+  reporterId  String           @db.Uuid
+  title       String           @db.VarChar(200)
+  description String?          @db.Text
+  status      TaskStatus       @default(BACKLOG)
+  priority    TaskPriority     @default(MEDIUM)
+  dueDate     DateTime?        @db.Date
+  version     Int              @default(1)
+  deletedAt   DateTime?        @db.Timestamptz(3)
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @db.Timestamptz(3)
+  room        Room?            @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  assignee    User?            @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  reporter    User             @relation("TaskReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  comments    TaskComment[]
+  attachments TaskAttachment[]
+  tags        TaskTag[]
+  events      TaskEvent[]
+  submissions Submission[]
+
+  @@index([status, deletedAt])
+  @@index([assigneeId, status, deletedAt])
+  @@index([reporterId, createdAt(sort: Desc)])
+  @@index([dueDate])
+  @@map("tasks")
+}
+
+model Tag {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @unique @db.VarChar(80)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  tasks     TaskTag[]
+
+  @@map("tags")
+}
+
+model TaskTag {
+  taskId    String   @db.Uuid
+  tagId     String   @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, tagId])
+  @@index([tagId])
+  @@map("task_tags")
+}
+
+model TaskEvent {
+  id        String        @id @default(uuid()) @db.Uuid
+  taskId    String        @db.Uuid
+  actorId   String?       @db.Uuid
+  type      TaskEventType
+  data      Json?
+  createdAt DateTime      @default(now()) @db.Timestamptz(3)
+  task      Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actor     User?         @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, createdAt])
+  @@index([actorId])
+  @@map("task_events")
+}
+
+model TaskComment {
+  id        String    @id @default(uuid()) @db.Uuid
+  taskId    String    @db.Uuid
+  authorId  String    @db.Uuid
+  body      String    @db.Text
+  deletedAt DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  task      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([taskId, createdAt])
+  @@index([authorId])
+  @@map("task_comments")
+}
+
+model TaskAttachment {
+  id             String         @id @default(uuid()) @db.Uuid
+  taskId         String         @db.Uuid
+  uploadedById   String         @db.Uuid
+  objectKey      String         @unique @db.VarChar(1024)
+  originalName   String         @db.VarChar(255)
+  mimeType       String         @db.VarChar(255)
+  byteSize       BigInt
+  checksumSha256 String         @db.Char(64)
+  scanStatus     FileScanStatus @default(PENDING)
+  deletedAt      DateTime?      @db.Timestamptz(3)
+  expiresAt      DateTime?      @db.Timestamptz(3)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  task           Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedBy     User           @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([taskId, deletedAt])
+  @@index([scanStatus])
+  @@index([expiresAt])
+  @@map("task_attachments")
+}
+
+model Submission {
+  id            String           @id @default(uuid()) @db.Uuid
+  taskId        String           @db.Uuid
+  submittedById String           @db.Uuid
+  version       Int
+  type          SubmissionType
+  linkUrl       String?          @db.VarChar(2048)
+  note          String?          @db.Text
+  deletedAt     DateTime?        @db.Timestamptz(3)
+  createdAt     DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @db.Timestamptz(3)
+  task          Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  submittedBy   User             @relation(fields: [submittedById], references: [id], onDelete: Restrict)
+  files         SubmissionFile[]
+
+  @@unique([taskId, version])
+  @@index([submittedById, createdAt(sort: Desc)])
+  @@map("submissions")
+}
+
+model SubmissionFile {
+  id             String         @id @default(uuid()) @db.Uuid
+  submissionId   String         @db.Uuid
+  objectKey      String         @unique @db.VarChar(1024)
+  originalName   String         @db.VarChar(255)
+  mimeType       String         @db.VarChar(255)
+  byteSize       BigInt
+  checksumSha256 String         @db.Char(64)
+  scanStatus     FileScanStatus @default(PENDING)
+  deletedAt      DateTime?      @db.Timestamptz(3)
+  expiresAt      DateTime?      @db.Timestamptz(3)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  submission     Submission     @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId, deletedAt])
+  @@index([scanStatus])
+  @@index([expiresAt])
+  @@map("submission_files")
+}
+
+model Meeting {
+  id             String               @id @default(uuid()) @db.Uuid
+  roomId         String?              @db.Uuid
+  createdById    String               @db.Uuid
+  title          String               @db.VarChar(200)
+  livekitRoomKey String               @unique @db.VarChar(120)
+  status         MeetingStatus        @default(SCHEDULED)
+  scheduledStart DateTime?            @db.Timestamptz(3)
+  startedAt      DateTime?            @db.Timestamptz(3)
+  endedAt        DateTime?            @db.Timestamptz(3)
+  deletedAt      DateTime?            @db.Timestamptz(3)
+  createdAt      DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime             @updatedAt @db.Timestamptz(3)
+  room           Room?                @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  createdBy      User                 @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  participants   MeetingParticipant[]
+  messages       MeetingMessage[]
+
+  @@index([status, scheduledStart])
+  @@index([createdById, createdAt(sort: Desc)])
+  @@map("meetings")
+}
+
+model MeetingMessage {
+  id        String    @id @default(uuid()) @db.Uuid
+  meetingId String    @db.Uuid
+  authorId  String    @db.Uuid
+  body      String    @db.Text
+  deletedAt DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  meeting   Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([meetingId, createdAt])
+  @@index([authorId])
+  @@map("meeting_messages")
+}
+
+model MeetingParticipant {
+  id         String                   @id @default(uuid()) @db.Uuid
+  meetingId  String                   @db.Uuid
+  userId     String                   @db.Uuid
+  role       MeetingParticipantRole   @default(PARTICIPANT)
+  status     MeetingParticipantStatus @default(INVITED)
+  joinedAt   DateTime?                @db.Timestamptz(3)
+  leftAt     DateTime?                @db.Timestamptz(3)
+  lastSeenAt DateTime?                @db.Timestamptz(3)
+  createdAt  DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime                 @updatedAt @db.Timestamptz(3)
+  meeting    Meeting                  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user       User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([meetingId, userId])
+  @@index([userId, status])
+  @@map("meeting_participants")
+}
+
+model Notification {
+  id              String           @id @default(uuid()) @db.Uuid
+  recipientId     String           @db.Uuid
+  actorId         String?          @db.Uuid
+  activityEventId String?          @db.Uuid
+  type            NotificationType
+  messageKey      String           @db.VarChar(160)
+  data            Json?
+  readAt          DateTime?        @db.Timestamptz(3)
+  expiresAt       DateTime?        @db.Timestamptz(3)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(3)
+  recipient       User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor           User?            @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  activityEvent   ActivityEvent?   @relation(fields: [activityEventId], references: [id], onDelete: SetNull)
+
+  @@index([recipientId, readAt, createdAt(sort: Desc)])
+  @@index([activityEventId])
+  @@index([expiresAt])
+  @@map("notifications")
+}
